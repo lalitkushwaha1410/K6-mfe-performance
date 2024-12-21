@@ -1,0 +1,24 @@
+{
+  "name": "cc-podcast-performance-suite",
+  "version": "1.0.0",
+  "description": "To measure performance of podcast capability",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "chromeTest": "yarn cypress run --browser chrome"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "cypress": "^13.17.0",
+    "cypress-mochawesome-reporter": "^3.5.0",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@cypress-audit/lighthouse": "^1.4.2",
+    "@lhci/cli": "^0.12.0",
+    "cypress-audit": "^1.1.0",
+    "lighthouse": "^10.3.0"
+  }
+}

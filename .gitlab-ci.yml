@@ -1,0 +1,175 @@
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  NO_PROXY: "gitlab.cha.rbxd.ds"
+  DOCKER_HOST: tcp://127.0.0.1:2375
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_DRIVER: overlay2
+  npm_config_cache: '$CI_PROJECT_DIR/.npm'
+  CYPRESS_CACHE_FOLDER: '$CI_PROJECT_DIR/cache/Cypress'
+  PUPPETEER_SKIP_DOWNLOAD: 'true'
+  ENV: 'staging'
+  NOTIFY: 'false'
+
+.docker_curl_runner_podcast: &docker_curl_runner_podcast
+  image:
+    name: ${DOCKER_REGISTRY_CHA}/alpine/curl-jq:3.14
+  tags:
+    - k8s-cha-v2
+
+stages:
+  - test
+  - notify
+  - validate
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .cache/*
+    - cache/Cypress
+    - node_modules
+
+cypress-podcast-performance-test-chrome:      
+  image: cypress/browsers:node16.17.1-chrome106-ff105-edge
+  stage: test
+  tags:
+    - k8s-cha-v2
+  script:
+    - yarn install --network-timeout 100000
+    - echo "Running Performance Tests On :$ENV"
+    - yarn add puppeteer-core
+    - yarn add -g lighthouse && yarn add --dev @lhci/cli@0.12.0
+    - yarn cypress run --browser chrome --env ENV=$ENV
+    - echo "Run performance test suite completed" > ./performance_test_completed
+  after_script:
+     - echo "JOB_STATUS=${CI_JOB_STATUS:-success}" >> test_results.env
+     - echo "The status of the pipeline is:" $CI_PIPELINE_STATUS
+     - echo "JOB_ID=$CI_JOB_ID" >> test_results.env
+     - if [[ $CI_JOB_STATUS == "success" ]]; then
+        echo "The Automation Test cases got passed!";
+        echo "JOB_STATUS=${CI_JOB_STATUS:-success}" >> test_results.env
+        echo "JOB_ID=$CI_JOB_ID" >> test_results.env
+      else
+        echo "The Automation Test cases got failed!";
+        echo "JOB_STATUS=${CI_JOB_STATUS:-failed}" >> test_results.env
+        echo "JOB_ID=$CI_JOB_ID" >> test_results.env
+      fi
+  artifacts:
+    when: always
+    paths:
+      - cypress/Report
+      - cypress/screenshots
+      - cypress/videos
+      - ./performance_test_completed
+    expire_in: 7 day
+    reports:
+      dotenv: test_results.env
+  allow_failure: true
+
+Notify on teams channel:
+  <<: *docker_curl_runner_podcast
+  needs: [cypress-podcast-performance-test-chrome]
+  stage: notify
+  tags:
+    - k8s-cha-v2
+  script:
+    - |
+      if [[ "$JOB_STATUS" == "success" ]]; then
+        themeColor="52eb34"  # Green color for success
+      else
+        themeColor="eb3434"  # Red color for failure
+      fi
+      curl -X POST -H "Content-Type: application/json" -d '{
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "themeColor": "'"$themeColor"'",
+        "summary": "Podcast Capability",
+        "sections": [{
+          "activityTitle": "Podcast Capability - MFE Performance Test Results",
+          "activitySubtitle": "Content Convergence",
+          "activityImage": "https://www.icis.com/explore/wp-content/themes/icis-2020/assets/images/footer-logo.png",
+          "facts": [{
+            "name": "Project",
+            "value": "'"$CI_PROJECT_NAME"'"
+          }, {
+            "name": "Branch",
+            "value": "'"$CI_COMMIT_BRANCH"'"
+          }, {
+            "name": "Environment",
+            "value": "'"$ENV"'"
+          },{
+            "name": "Status",
+            "value": "'"$JOB_STATUS"'"
+          },{
+            "name": "Author",
+            "value": "'"$GITLAB_USER_NAME"'"
+          }],
+          "markdown": true
+        }],
+        "potentialAction": [{
+          "@type": "OpenUri",
+          "name": "Play Performance Test Video Recording",
+          "targets": [{
+            "os": "default",
+            "uri": "https://gitlab.cha.rbxd.ds/icis/capabilities/Podcast/performance-test-suite/-/jobs/'"$JOB_ID"'/artifacts/file/cypress/videos/Podcast_Comp_Perf.cy.ts.mp4"
+          }]
+        },{
+          "@type": "OpenUri",
+          "name": "Browse Performance Test Screenshots",
+          "targets": [{
+            "os": "default",
+            "uri": "https://gitlab.cha.rbxd.ds/icis/capabilities/Podcast/performance-test-suite/-/jobs/'"$JOB_ID"'/artifacts/browse/cypress/screenshots/Podcast_Comp_Perf.cy.ts/"
+          }]
+        },{
+          "@type": "OpenUri",
+          "name": "Download Performance Test Reports for Subscriber-Normal",
+          "targets": [{
+            "os": "default",
+            "uri": "https://gitlab.cha.rbxd.ds/icis/capabilities/Podcast/performance-test-suite/-/jobs/'"$JOB_ID"'/artifacts/raw/cypress/Report/Subscriber-Normal_PerformanceReport.html"
+          }]
+        },
+        {
+          "@type": "OpenUri",
+          "name": "Download Performance Test Reports for Subscriber-Minimal",
+          "targets": [{
+            "os": "default",
+            "uri": "https://gitlab.cha.rbxd.ds/icis/capabilities/Podcast/performance-test-suite/-/jobs/'"$JOB_ID"'/artifacts/raw/cypress/Report/Subscriber-Minimal_PerformanceReport.html"
+          }]
+        },
+        {
+          "@type": "OpenUri",
+          "name": "Download Performance Test Reports for Authoring-Minimal",
+          "targets": [{
+            "os": "default",
+            "uri": "https://gitlab.cha.rbxd.ds/icis/capabilities/Podcast/performance-test-suite/-/jobs/'"$JOB_ID"'/artifacts/raw/cypress/Report/Author-Minimal_PerformanceReport.html"
+          }]
+        },{
+          "@type": "OpenUri",
+          "name": "Download Performance Test Reports for Authoring-Normal",
+          "targets": [{
+            "os": "default",
+            "uri": "https://gitlab.cha.rbxd.ds/icis/capabilities/Podcast/performance-test-suite/-/jobs/'"$JOB_ID"'/artifacts/raw/cypress/Report/Author-Normal_PerformanceReport.html"
+          }]
+        }]
+      }' $TEAMS_WEBHOOK_URL
+  dependencies:
+    - cypress-podcast-performance-test-chrome
+  rules:
+    - if: '$NOTIFY == "true"'
+
+
+Verify jobs: 
+  stage: validate
+  tags:
+    - k8s-cha-v2
+  script: 
+    - |
+      if [[ -f ./performance_test_completed ]]; then
+      echo "cypress-podcast-performance-test-chrome job was completed."
+      else
+      echo "cypress-podcast-performance-test-chrome job was not completed."
+      exit 1
+      fi
+  dependencies:
+    - cypress-podcast-performance-test-chrome
+
+
